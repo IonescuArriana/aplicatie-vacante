@@ -28,7 +28,7 @@ def obtine_lista_vacante():
 
 def incarca_vacanta_din_cloud(nume):
     try:
-        r = requests.get(f"{LINK_GOOGLE_SCRIPT}?action=get_data&nume={nume}")
+        r = requests.get(f"{https://script.google.com/macros/s/AKfycbzOxtOlXfAYRCMcRbKzcufwBZ9mLtXfu5DoH4TUhAHCsjctFrghADSz2kDGfQmOd58G9g/exec}?action=get_data&nume={nume}")
         data = r.json()
         if not data: return None
         for ruta in data.get('calendar', []):
