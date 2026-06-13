@@ -32,7 +32,7 @@ if not os.path.exists(config_path):
 # ==========================================
 # CONEXIUNEA LA GOOGLE CLOUD (SHEETS)
 # ==========================================
-LINK_GOOGLE_SCRIPT = "LIPEȘTE_AICI_LINKUL_TĂU"
+LINK_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbzOxtOlXfAYRCMcRbKzcufwBZ9mLtXfu5DoH4TUhAHCsjctFrghADSz2kDGfQmOd58G9g/exec"
 
 
 class DateEncoder(json.JSONEncoder):
