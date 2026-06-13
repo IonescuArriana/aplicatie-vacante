@@ -1,5 +1,3 @@
-import os
-import json
 import streamlit as st
 import pandas as pd
 import folium
@@ -9,473 +7,135 @@ from geopy.geocoders import Nominatim
 import datetime
 import plotly.express as px
 import requests
+import json
 
-# --- SETĂRI PAGINĂ ȘI TEMĂ NATIVĂ ---
 st.set_page_config(page_title="Hub Vacanțe", page_icon="🧳", layout="wide")
 
-if not os.path.exists(".streamlit"):
-    os.makedirs(".streamlit")
-theme_config = """
-[theme]
-base="light"
-primaryColor="#D81B60"
-backgroundColor="#FFF5F8"
-secondaryBackgroundColor="#FFE4EC"
-textColor="#333333"
-font="sans serif"
-"""
-config_path = ".streamlit/config.toml"
-if not os.path.exists(config_path):
-    with open(config_path, "w") as f: f.write(theme_config)
-    st.rerun()
-
-# ==========================================
-# CONEXIUNEA LA GOOGLE CLOUD (SHEETS)
-# ==========================================
-LINK_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbzOxtOlXfAYRCMcRbKzcufwBZ9mLtXfu5DoH4TUhAHCsjctFrghADSz2kDGfQmOd58G9g/exec"
-
+# --- CONEXIUNE CLOUD ---
+LINK_GOOGLE_SCRIPT = "LIPEȘTE_AICI_LINKUL_TĂU"
 
 class DateEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, datetime.date): return obj.isoformat()
         return super().default(obj)
 
-
 @st.cache_data(ttl=5)
 def obtine_lista_vacante():
-    if LINK_GOOGLE_SCRIPT == "https://script.google.com/macros/s/AKfycbzOxtOlXfAYRCMcRbKzcufwBZ9mLtXfu5DoH4TUhAHCsjctFrghADSz2kDGfQmOd58G9g/exec": return []
     try:
         r = requests.get(f"{LINK_GOOGLE_SCRIPT}?action=get_vacante")
-        return r.json()
-    except:
-        return []
+        return r.json() if r.status_code == 200 else []
+    except: return []
 
-
-def incarca_vacanta_din_cloud(nume_vacanta):
+def incarca_vacanta_din_cloud(nume):
     try:
-        r = requests.get(f"{LINK_GOOGLE_SCRIPT}?action=get_data&nume={nume_vacanta}")
+        r = requests.get(f"{LINK_GOOGLE_SCRIPT}?action=get_data&nume={nume}")
         data = r.json()
         if not data: return None
         for ruta in data.get('calendar', []):
-            if isinstance(ruta['data'], str):
-                ruta['data'] = datetime.date.fromisoformat(ruta['data'])
+            if isinstance(ruta.get('data'), str): ruta['data'] = datetime.date.fromisoformat(ruta['data'])
         return data
-    except:
-        return None
-
+    except: return None
 
 def sync_to_cloud():
     if st.session_state.get('vacanta_activa'):
-        date_curente = {
+        date = {
             "orase": st.session_state.orase, "activitati": st.session_state.activitati,
             "calendar": st.session_state.calendar, "bagaje": st.session_state.bagaje,
             "next_act_id": st.session_state.next_act_id, "next_cal_id": st.session_state.next_cal_id
         }
-        try:
-            payload = json.dumps({"nume_vacanta": st.session_state.vacanta_activa, "date": date_curente},
-                                 cls=DateEncoder)
-            requests.post(LINK_GOOGLE_SCRIPT, data=payload, headers={"Content-Type": "application/json"})
-        except Exception as e:
-            st.toast("⚠️ Eroare la salvarea în cloud, verifică netul.")
+        payload = json.dumps({"nume_vacanta": st.session_state.vacanta_activa, "date": date}, cls=DateEncoder)
+        requests.post(LINK_GOOGLE_SCRIPT, data=payload, headers={"Content-Type": "application/json"})
 
-
-# ==========================================
-# PLASĂ DE SIGURANȚĂ MEMORIE
-# ==========================================
-default_keys = {
-    'orase': {}, 'activitati': [], 'calendar': [], 'bagaje': {},
-    'next_act_id': 1, 'next_cal_id': 1, 'loaded_vacanta': None, 'vacanta_activa': None
-}
+# --- INIȚIALIZARE MEMORIE ---
+default_keys = {'orase': {}, 'activitati': [], 'calendar': [], 'bagaje': {}, 'next_act_id': 1, 'next_cal_id': 1, 'vacanta_activa': None}
 for key, val in default_keys.items():
     if key not in st.session_state: st.session_state[key] = val
 
 # --- GEOCODING ---
 geolocator = Nominatim(user_agent="planificator_vacante_pro")
-
-
 @st.cache_data
-def gaseste_coordonate(nume_locatie, fallback_coords=[41.8719, 12.5674]):
+def gaseste_coordonate(nume):
     try:
-        locatie = geolocator.geocode(nume_locatie, timeout=5)
-        if locatie: return [locatie.latitude, locatie.longitude]
-    except:
-        pass
-    return fallback_coords
+        loc = geolocator.geocode(f"{nume}, Italia", timeout=5)
+        return [loc.latitude, loc.longitude] if loc else [41.8719, 12.5674]
+    except: return [41.8719, 12.5674]
 
+# --- MENIU LATERAL ---
+st.sidebar.markdown("## 🌍 Hub Vacanțe")
+vacante = obtine_lista_vacante()
+noua_v = st.sidebar.text_input("➕ Vacanță nouă")
+if st.sidebar.button("Creează"):
+    if noua_v and noua_v not in vacante:
+        st.session_state.vacanta_activa = noua_v
+        st.session_state.orase = {}; st.session_state.activitati = []; st.session_state.calendar = []; st.session_state.bagaje = {"Documente": {}}
+        sync_to_cloud()
+        st.rerun()
 
-# ==========================================
-# MENIU LATERAL: HUB-UL DE VACANȚE
-# ==========================================
-st.sidebar.markdown("## 🌍 Hub Vacanțe Cloud")
+if vacante:
+    st.session_state.vacanta_activa = st.sidebar.selectbox("📂 Vacanță activă:", vacante, index=vacante.index(st.session_state.vacanta_activa) if st.session_state.vacanta_activa in vacante else 0)
+    data = incarca_vacanta_din_cloud(st.session_state.vacanta_activa)
+    if data:
+        st.session_state.update(data)
 
-vacante_disponibile = obtine_lista_vacante()
+# --- PAGINI ---
+menu = st.sidebar.radio("Navigare:", ["🗺️ Harta", "📅 Calendar", "🏙️ Orașe", "💰 Buget", "🎒 Bagaje"])
 
-with st.sidebar.expander("➕ Creează Vacanță Nouă în Cloud"):
-    noua_vacanta = st.text_input("Nume vacanță (ex: Grecia 2027)")
-    if st.button("Creează Fișier"):
-        if noua_vacanta and noua_vacanta not in vacante_disponibile:
-            date_default = {
-                "orase": {}, "activitati": [], "calendar": [],
-                "bagaje": {"Documente": {"Pașaport": False, "Bilete": False}, "Electronice": {"Încărcător": False}},
-                "next_act_id": 1, "next_cal_id": 1
-            }
-            st.session_state.vacanta_activa = noua_vacanta
-            st.session_state.orase = date_default["orase"]
-            st.session_state.activitati = date_default["activitati"]
-            st.session_state.calendar = date_default["calendar"]
-            st.session_state.bagaje = date_default["bagaje"]
-            st.session_state.next_act_id = 1
-            st.session_state.next_cal_id = 1
-            sync_to_cloud()
-            obtine_lista_vacante.clear()
-            st.session_state.loaded_vacanta = None
-            st.rerun()
-
-st.sidebar.divider()
-
-if LINK_GOOGLE_SCRIPT == "LIPEȘTE_AICI_LINKUL_TĂU":
-    st.error("⚠️ Nu ai pus linkul de la Google Apps Script în fișierul app.py!")
-    st.stop()
-
-if not vacante_disponibile:
-    st.warning("Nu ai nicio vacanță salvată în Cloud. Creează una din meniul din stânga!")
-    st.stop()
-
-index_curent = vacante_disponibile.index(
-    st.session_state.vacanta_activa) if st.session_state.vacanta_activa in vacante_disponibile else 0
-vacanta_activa = st.sidebar.selectbox("📂 Selectează Vacanța Activă:", vacante_disponibile, index=index_curent)
-
-if st.session_state.loaded_vacanta != vacanta_activa:
-    with st.spinner('Descarc datele din Cloud... ☁️'):
-        data_vacanta = incarca_vacanta_din_cloud(vacanta_activa)
-        if data_vacanta:
-            st.session_state.orase = data_vacanta.get('orase', {})
-            st.session_state.activitati = data_vacanta.get('activitati', [])
-            st.session_state.calendar = data_vacanta.get('calendar', [])
-            st.session_state.bagaje = data_vacanta.get('bagaje', {})
-            st.session_state.next_act_id = data_vacanta.get('next_act_id', 1)
-            st.session_state.next_cal_id = data_vacanta.get('next_cal_id', 1)
-
-        st.session_state.loaded_vacanta = vacanta_activa
-        st.session_state.vacanta_activa = vacanta_activa
-
-st.sidebar.divider()
-menu = st.sidebar.radio("Meniu Navigare:", [
-    "🗺️ Harta Generală",
-    "📅 Calendar & Transport",
-    "🏙️ Orașe & Cazare",
-    "💰 Buget Detaliat (Grafice)",
-    "🎒 Checklist Bagaje"
-])
-
-
-def get_gmaps_link(query):
-    return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(query)}"
-
-
-st.markdown(f"##### ✈️ Date live din Cloud pentru: **{vacanta_activa.upper()}**")
-st.divider()
-
-# ==========================================
-# 1. HARTA GENERALĂ
-# ==========================================
-if menu == "🗺️ Harta Generală":
-    st.title("🗺️ Traseul General")
+if menu == "🗺️ Harta":
+    st.title("🗺️ Harta Generală")
     if st.session_state.orase:
-        first_city_coords = list(st.session_state.orase.values())[0]["coords"]
-        m_general = folium.Map(location=first_city_coords, zoom_start=6)
-        for oras, detalii in st.session_state.orase.items():
-            folium.Marker(
-                detalii["coords"], popup=f"📍 {oras} (Cazare: {detalii['cazare']}€)",
-                tooltip=oras, icon=folium.Icon(color="red", icon="info-sign")
-            ).add_to(m_general)
-        st_folium(m_general, use_container_width=True, height=500)
-    else:
-        st.info("Harta este goală. Adaugă orașe din meniul alăturat!")
+        coords = list(st.session_state.orase.values())[0]["coords"]
+        m = folium.Map(location=coords, zoom_start=6)
+        for o, d in st.session_state.orase.items(): folium.Marker(d["coords"], popup=o).add_to(m)
+        st_folium(m, use_container_width=True)
 
-# ==========================================
-# 2. CALENDAR & TRANSPORT (CU EDITARE)
-# ==========================================
-elif menu == "📅 Calendar & Transport":
-    st.title("📅 Jurnal de Călătorie & Rute")
-    tab_traseu, tab_adauga = st.tabs(["🛣️ Traseul Meu", "➕ Adaugă Rută Nouă"])
+elif menu == "📅 Calendar":
+    st.title("📅 Calendar")
+    with st.form("ruta"):
+        c1, c2, c3 = st.columns(3)
+        plecare = c1.text_input("Plecare"); destinatie = c2.text_input("Sosire"); cost = c3.number_input("Cost")
+        if st.form_submit_button("Adaugă"):
+            st.session_state.calendar.append({"id": st.session_state.next_cal_id, "data": datetime.date.today(), "de_la": plecare, "pana_la": destinatie, "cost": cost})
+            st.session_state.next_cal_id += 1
+            sync_to_cloud(); st.rerun()
+    for r in st.session_state.calendar:
+        with st.container(border=True):
+            st.write(f"{r['de_la']} ➔ {r['pana_la']} | {r['cost']}€")
 
-    opțiuni_transport = ["✈️ Zbor", "🚆 Tren", "🚌 Autobuz", "🚗 Mașină", "🚕 Taxi", "🚢 Feribot"]
+elif menu == "🏙️ Orașe":
+    st.title("🏙️ Orașe & Activități")
+    o_nume = st.text_input("Oraș nou")
+    if st.button("Adaugă"):
+        st.session_state.orase[o_nume] = {"coords": gaseste_coordonate(o_nume), "cazare": 0, "food": ""}
+        sync_to_cloud(); st.rerun()
+    
+    for oras in st.session_state.orase:
+        with st.expander(oras):
+            new_cazare = st.number_input("Cazare €", value=float(st.session_state.orase[oras]['cazare']), key=f"caz_{oras}")
+            if st.button("Salvează", key=f"save_{oras}"):
+                st.session_state.orase[oras]['cazare'] = new_cazare
+                sync_to_cloud(); st.rerun()
 
-    with tab_adauga:
-        with st.form("form_ruta_noua", clear_on_submit=True):
-            col1, col2, col3 = st.columns(3)
-            data_ruta = col1.date_input("Data Deplasării", datetime.date.today())
-            plecare = col2.text_input("Oraș Plecare")
-            destinatie = col3.text_input("Oraș Destinație")
-            col4, col5 = st.columns(2)
-            mijloc = col4.selectbox("Cum călătoriți?", opțiuni_transport)
-            cost_ruta = col5.number_input("Cost total (EUR) pt. Toți", min_value=0.0, step=1.0)
+elif menu == "💰 Buget":
+    st.title("💰 Buget Detaliat")
+    total_cazare = sum(d.get("cazare", 0) for d in st.session_state.orase.values())
+    total_act = sum(a['cost'] for a in st.session_state.activitati) * 2
+    st.metric("Total Estimativ", f"€ {total_cazare + total_act}")
+    
+    df = pd.DataFrame({"Cat": ["Cazare", "Activități"], "Valoare": [total_cazare, total_act]})
+    st.plotly_chart(px.pie(df, values="Valoare", names="Cat"))
 
-            if st.form_submit_button("Salvează Ruta"):
-                if plecare and destinatie:
-                    st.session_state.calendar.append({
-                        "id": st.session_state.next_cal_id, "data": data_ruta,
-                        "de_la": plecare, "pana_la": destinatie, "mijloc": mijloc, "cost": cost_ruta
-                    })
-                    st.session_state.next_cal_id += 1
-                    sync_to_cloud()
-                    st.success("Rută adăugată în Cloud!")
-                    st.rerun()
-
-    with tab_traseu:
-        rute_sortate = sorted(st.session_state.calendar, key=lambda x: x['data'])
-        if not rute_sortate: st.info("Nu ai nicio rută planificată încă.")
-        for ruta in rute_sortate:
-            with st.container(border=True):
-                c1, c2, c3 = st.columns([1, 3, 1])
-                with c1:
-                    st.subheader(f"{ruta['data'].strftime('%d %b')}")
-                with c2:
-                    st.markdown(f"#### {ruta['de_la']} ➔ {ruta['mijloc']} ➔ {ruta['pana_la']}")
-                with c3:
-                    st.markdown(f"💶 **{ruta['cost']} €**")
-                    if st.button("Șterge ❌", key=f"del_cal_{ruta['id']}", use_container_width=True):
-                        st.session_state.calendar = [r for r in st.session_state.calendar if r['id'] != ruta['id']]
-                        sync_to_cloud()
-                        st.rerun()
-
-                # PANOU DE EDITARE RUTĂ
-                with st.expander("✏️ Editează Ruta"):
-                    with st.form(f"edit_form_cal_{ruta['id']}"):
-                        ec1, ec2, ec3 = st.columns(3)
-                        new_data = ec1.date_input("Data", value=ruta['data'])
-                        new_de_la = ec2.text_input("Plecare", value=ruta['de_la'])
-                        new_pana_la = ec3.text_input("Destinație", value=ruta['pana_la'])
-                        ec4, ec5 = st.columns(2)
-                        idx_transport = opțiuni_transport.index(ruta['mijloc']) if ruta[
-                                                                                       'mijloc'] in opțiuni_transport else 0
-                        new_mijloc = ec4.selectbox("Transport", opțiuni_transport, index=idx_transport)
-                        new_cost = ec5.number_input("Cost (EUR)", value=float(ruta['cost']), step=1.0)
-
-                        if st.form_submit_button("Salvează Modificările"):
-                            ruta['data'] = new_data
-                            ruta['de_la'] = new_de_la
-                            ruta['pana_la'] = new_pana_la
-                            ruta['mijloc'] = new_mijloc
-                            ruta['cost'] = new_cost
-                            sync_to_cloud()
-                            st.rerun()
-
-# ==========================================
-# 3. ORAȘE & CAZARE (CU EDITARE)
-# ==========================================
-elif menu == "🏙️ Orașe & Cazare":
-    st.title("🏙️ Gestionează Orașe și Activități")
-    with st.expander("➕ Click aici pentru a adăuga un oraș NOU", expanded=False):
-        with st.form("form_oras_nou", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            o_nume = col1.text_input("Nume Oraș (ex: Roma)")
-            o_cazare = col2.number_input("Cost TOTAL Cazare în acest oraș (EUR)", min_value=0.0, step=10.0)
-            o_food = st.text_input("Ce mâncăm aici? (Recomandări)")
-            if st.form_submit_button("Salvează Orașul"):
-                if o_nume:
-                    with st.spinner(f'Caut coordonatele...'):
-                        coords = gaseste_coordonate(f"{o_nume}")
-                    st.session_state.orase[o_nume] = {"coords": coords, "food": o_food, "cazare": o_cazare}
-                    sync_to_cloud()
-                    st.success("Oraș salvat în Cloud!")
-                    st.rerun()
-
-    st.divider()
-    if st.session_state.orase:
-        col_select, col_del = st.columns([3, 1])
-        oras_selectat = col_select.selectbox("Alege orașul de explorat:", list(st.session_state.orase.keys()))
-
-        if col_del.button(f"🗑️ Șterge orașul"):
-            del st.session_state.orase[oras_selectat]
-            st.session_state.activitati = [a for a in st.session_state.activitati if a["oras"] != oras_selectat]
-            sync_to_cloud()
-            st.rerun()
-
-        if oras_selectat in st.session_state.orase:
-            # PANOU EDITARE ORAȘ
-            with st.expander("✏️ Editează detaliile orașului"):
-                with st.form(f"edit_oras_{oras_selectat}"):
-                    eo1, eo2 = st.columns(2)
-                    new_nume_oras = eo1.text_input("Nume Oraș", value=oras_selectat)
-                    new_cazare = eo2.number_input("Cost Cazare (EUR)",
-                                                  value=float(st.session_state.orase[oras_selectat]['cazare']),
-                                                  step=10.0)
-                    new_food = st.text_input("Recomandări culinare",
-                                             value=st.session_state.orase[oras_selectat]['food'])
-
-                    if st.form_submit_button("Salvează Modificările Orașului"):
-                        # Daca am schimbat numele orasului, trebuie sa mutam datele si sa updatam activitatile
-                        if new_nume_oras != oras_selectat and new_nume_oras != "":
-                            st.session_state.orase[new_nume_oras] = st.session_state.orase.pop(oras_selectat)
-                            for a in st.session_state.activitati:
-                                if a["oras"] == oras_selectat:
-                                    a["oras"] = new_nume_oras
-                            oras_tinta = new_nume_oras
-                        else:
-                            oras_tinta = oras_selectat
-
-                        st.session_state.orase[oras_tinta]['cazare'] = new_cazare
-                        st.session_state.orase[oras_tinta]['food'] = new_food
-                        sync_to_cloud()
-                        st.rerun()
-
-            tab_harta, tab_act = st.tabs(["📍 Harta Orașului", "🎟️ Obiective & Activități"])
-            with tab_harta:
-                st.success(
-                    f"**🏨 Cazare:** {st.session_state.orase[oras_selectat]['cazare']} €  |  **🍕 Recomandări:** {st.session_state.orase[oras_selectat]['food']}")
-                coords = st.session_state.orase[oras_selectat]["coords"]
-                m_local = folium.Map(location=coords, zoom_start=13)
-                folium.Marker(coords, popup="Centru Oraș", icon=folium.Icon(color="red", icon="home")).add_to(m_local)
-
-                for act in [a for a in st.session_state.activitati if a["oras"] == oras_selectat]:
-                    is_done = act.get("done", False)
-                    folium.Marker(
-                        [act.get("lat", coords[0]), act.get("lon", coords[1])], popup=act['nume'],
-                        icon=folium.Icon(color="green" if is_done else "orange", icon="ok" if is_done else "star")
-                    ).add_to(m_local)
-
-                st_folium(m_local, use_container_width=True, height=450, key=f"map_{oras_selectat}")
-                st.markdown(f"🗺️ **[Deschide {oras_selectat} pe Google Maps]({get_gmaps_link(oras_selectat)})**")
-
-            with tab_act:
-                activitati_locale = [a for a in st.session_state.activitati if a["oras"] == oras_selectat]
-                for act in activitati_locale:
-                    with st.container(border=True):
-                        c_chk, c_text, c_del = st.columns([1, 4, 1])
-                        new_status = c_chk.checkbox("Am fost / Făcut", value=act.get("done", False),
-                                                    key=f"done_act_{act['id']}")
-                        if new_status != act.get("done", False):
-                            for a in st.session_state.activitati:
-                                if a["id"] == act["id"]: a["done"] = new_status
-                            sync_to_cloud()
-                            st.rerun()
-                        text_display = f"~~{act['nume']}~~" if new_status else act['nume']
-                        c_text.markdown(f"**{text_display}** ➔ {act['cost']} €")
-                        if c_del.button("❌", key=f"del_act_{act['id']}"):
-                            st.session_state.activitati = [a for a in st.session_state.activitati if
-                                                           a["id"] != act['id']]
-                            sync_to_cloud()
-                            st.rerun()
-
-                        # PANOU EDITARE ACTIVITATE
-                        with st.expander("✏️ Editează obiectivul"):
-                            with st.form(f"edit_form_act_{act['id']}"):
-                                ea1, ea2 = st.columns(2)
-                                new_act_nume = ea1.text_input("Nume", value=act['nume'])
-                                new_act_cost = ea2.number_input("Cost (EUR)", value=float(act['cost']), step=1.0)
-                                if st.form_submit_button("Salvează Modificările"):
-                                    act['nume'] = new_act_nume
-                                    act['cost'] = new_act_cost
-                                    sync_to_cloud()
-                                    st.rerun()
-
-                with st.form(f"form_add_act_{oras_selectat}", clear_on_submit=True):
-                    st.write("### ➕ Adaugă obiectiv nou")
-                    col_nume, col_cost = st.columns(2)
-                    nume_nou = col_nume.text_input("Nume Obiectiv")
-                    cost_nou = col_cost.number_input("Cost intrare (EUR/pers)", min_value=0.0, step=1.0)
-                    if st.form_submit_button("Salvează Obiectivul"):
-                        if nume_nou:
-                            with st.spinner("Caut locația exactă pe hartă..."):
-                                coords_act = gaseste_coordonate(f"{nume_nou}, {oras_selectat}", fallback_coords=coords)
-                            st.session_state.activitati.append({
-                                "id": st.session_state.next_act_id, "oras": oras_selectat, "nume": nume_nou,
-                                "cost": cost_nou, "lat": coords_act[0], "lon": coords_act[1], "done": False
-                            })
-                            st.session_state.next_act_id += 1
-                            sync_to_cloud()
-                            st.rerun()
-
-# ==========================================
-# 4. BUGET DETALIAT (GRAFICE)
-# ==========================================
-elif menu == "💰 Buget Detaliat (Grafice)":
-    st.title("📊 Calculator Buget & Grafice Interactive")
-    with st.container(border=True):
-        col_curs, col_zile = st.columns(2)
-        curs = col_curs.number_input("Curs Valutar (RON/EUR)", value=4.98, step=0.01)
-        zile_totale = col_zile.number_input("Câte zile durează vacanța?", value=14, step=1)
-        mancare_zi = st.slider("🍕 Buget Mâncare & Diverse / zi / persoană (EUR)", 0, 200, 0)
-
-        total_cazare_eur = sum(detalii.get("cazare", 0) for detalii in st.session_state.orase.values())
-        total_transport_eur = sum(ruta.get("cost", 0) for ruta in st.session_state.calendar)
-        total_activitati_eur = sum(act["cost"] for act in st.session_state.activitati) * 2
-        total_mancare_eur = mancare_zi * zile_totale * 2
-
-        total_eur = total_cazare_eur + total_transport_eur + total_activitati_eur + total_mancare_eur
-        total_ron = total_eur * curs
-
-    st.success(f"## 💰 TOTAL ESTIMAT: {total_ron:,.0f} RON (aprox. {total_eur:,.0f} €)")
-
-    metrice = st.columns(4)
-    metrice[0].metric("🏨 Cazare", f"€ {total_cazare_eur}")
-    metrice[1].metric("🚆 Transport", f"€ {total_transport_eur}")
-    metrice[2].metric("🎟️ Activități", f"€ {total_activitati_eur}")
-    metrice[3].metric("🍕 Mâncare", f"€ {total_mancare_eur}")
-
-    st.divider()
-    df_buget = pd.DataFrame({
-        "Categorie": ["Cazare", "Transport", "Activități", "Mâncare"],
-        "Cost (EUR)": [total_cazare_eur, total_transport_eur, total_activitati_eur, total_mancare_eur]
-    })
-    col_grafic1, col_grafic2 = st.columns(2)
-    with col_grafic1:
-        fig_pie = px.pie(df_buget, values='Cost (EUR)', names='Categorie', title='Pondere Cheltuieli',
-                         color_discrete_sequence=px.colors.qualitative.Pastel)
-        st.plotly_chart(fig_pie, use_container_width=True)
-    with col_grafic2:
-        fig_bar = px.bar(df_buget, x='Categorie', y='Cost (EUR)', title='Sume pe Categorii (EUR)', text_auto=True,
-                         color='Categorie', color_discrete_sequence=px.colors.qualitative.Pastel)
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-# ==========================================
-# 5. CHECKLIST BAGAJE
-# ==========================================
-elif menu == "🎒 Checklist Bagaje":
-    st.title("🎒 Lista de Împachetat")
-    with st.expander("⚙️ Adaugă Categorii și Obiecte"):
-        c1, c2 = st.columns(2)
-        with c1:
-            new_cat = st.text_input("Nume categorie nouă")
-            if st.button("Crează Categorie") and new_cat:
-                if new_cat not in st.session_state.bagaje:
-                    st.session_state.bagaje[new_cat] = {}
-                    sync_to_cloud()
-                    st.rerun()
-        with c2:
-            if st.session_state.bagaje:
-                cat_sel = st.selectbox("Alege categoria", list(st.session_state.bagaje.keys()))
-                new_item = st.text_input("Obiect de pus în bagaj")
-                if st.button("Adaugă Obiect") and new_item:
-                    if new_item not in st.session_state.bagaje[cat_sel]:
-                        st.session_state.bagaje[cat_sel][new_item] = False
-                        sync_to_cloud()
-                        st.rerun()
-    st.divider()
-    if not st.session_state.bagaje: st.info("Lista de bagaje este goală.")
-
-    cols = st.columns(3)
-    col_idx = 0
-    for categorie, obiecte in list(st.session_state.bagaje.items()):
-        with cols[col_idx % 3]:
-            with st.container(border=True):
-                st.markdown(f"### {categorie}")
-                if not obiecte:
-                    if st.button(f"Șterge Categoria", key=f"delcat_{categorie}"):
-                        del st.session_state.bagaje[categorie]
-                        sync_to_cloud()
-                        st.rerun()
-                for item_name, is_checked in list(obiecte.items()):
-                    c_chk, c_del = st.columns([4, 1])
-                    new_status = c_chk.checkbox(item_name, value=is_checked, key=f"chk_{categorie}_{item_name}")
-                    if new_status != is_checked:
-                        st.session_state.bagaje[categorie][item_name] = new_status
-                        sync_to_cloud()
-                        st.rerun()
-                    if c_del.button("❌", key=f"del_{categorie}_{item_name}"):
-                        del st.session_state.bagaje[categorie][item_name]
-                        sync_to_cloud()
-                        st.rerun()
-        col_idx += 1
+elif menu == "🎒 Bagaje":
+    st.title("🎒 Bagaje")
+    cat = st.text_input("Categorie nouă")
+    if st.button("Adaugă Categorie"):
+        st.session_state.bagaje[cat] = {}
+        sync_to_cloud(); st.rerun()
+    
+    for c, items in st.session_state.bagaje.items():
+        st.subheader(c)
+        item = st.text_input(f"Obiect în {c}", key=f"inp_{c}")
+        if st.button("Adaugă", key=f"btn_{c}"):
+            st.session_state.bagaje[c][item] = False
+            sync_to_cloud(); st.rerun()
+        for i, val in items.items():
+            st.checkbox(i, value=val, key=f"chk_{c}_{i}")
