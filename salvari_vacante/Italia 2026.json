@@ -1,0 +1,16 @@
+{
+    "orase": {},
+    "activitati": [],
+    "calendar": [],
+    "bagaje": {
+        "Documente": {
+            "Pașaport": false,
+            "Bilete": false
+        },
+        "Electronice": {
+            "Încărcător": false
+        }
+    },
+    "next_act_id": 1,
+    "next_cal_id": 1
+}

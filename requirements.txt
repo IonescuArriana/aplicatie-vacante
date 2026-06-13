@@ -1,0 +1,5 @@
+pandas
+folium
+streamlit-folium
+geopy
+plotly
